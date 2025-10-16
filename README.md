@@ -1,4 +1,4 @@
-# lockin
+# LockIn
 
 A new Flutter project.
 
