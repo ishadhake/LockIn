@@ -7,6 +7,8 @@ import 'package:fl_chart/fl_chart.dart';
 import 'dart:async';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'services/group_service.dart';
+import 'models/group_models.dart';
 
 // Placeholders with structure for 10 screens. Fill in progressively.
 
@@ -575,27 +577,553 @@ class _CustomDurationDialogState extends State<_CustomDurationDialog> {
   }
 }
 
-class GroupLockScreen extends StatelessWidget {
+class GroupLockScreen extends StatefulWidget {
   const GroupLockScreen({super.key});
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Group Focus')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Row(children: [
-            Expanded(child: GradientButton(label: 'Create Group', onPressed: () {})),
-            const SizedBox(width: 12),
-            Expanded(child: GradientButton(label: 'Join Group', onPressed: () {})),
-          ]),
-          const SizedBox(height: 16),
-          const _MemberList(),
-          const SizedBox(height: 16),
-          Center(child: GradientButton(label: 'Start Together', icon: Icons.play_arrow_rounded, onPressed: () {})),
+  State<GroupLockScreen> createState() => _GroupLockScreenState();
+}
+
+class _GroupLockScreenState extends State<GroupLockScreen> {
+  final GroupService _groupService = GroupService();
+  Group? _currentGroup;
+  GroupSession? _activeSession;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCurrentGroup();
+    _groupService.currentGroupStream.listen((group) {
+      if (mounted) {
+        setState(() => _currentGroup = group);
+      }
+    });
+    _groupService.activeSessionStream.listen((session) {
+      if (mounted) {
+        setState(() => _activeSession = session);
+      }
+    });
+  }
+
+  void _loadCurrentGroup() {
+    _currentGroup = _groupService.getCurrentGroup();
+    _activeSession = _groupService.getActiveSession();
+  }
+
+  Future<void> _startGroupSession() async {
+    if (_currentGroup == null) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      await _groupService.startGroupSession(
+        groupId: _currentGroup!.id,
+        sessionName: 'Group Focus Session',
+        duration: const Duration(minutes: 25),
+        taskDescription: 'Focus session with ${_currentGroup!.name}',
+        lockedApps: const ['Instagram', 'YouTube', 'TikTok'],
+      );
+
+      if (mounted) {
+        Navigator.pushNamed(context, '/focus', arguments: {
+          'task': 'Group Focus Session',
+          'apps': const ['Instagram', 'YouTube', 'TikTok'],
+          'requirePhoto': false,
+          'isGroupSession': true,
+          'groupId': _currentGroup!.id,
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to start session: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _leaveGroup() async {
+    if (_currentGroup == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF262626),
+        title: const Text('Leave Group'),
+        content: Text('Are you sure you want to leave "${_currentGroup!.name}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Leave', style: TextStyle(color: Colors.red)),
+          ),
         ],
       ),
     );
+
+    if (confirmed == true) {
+      try {
+        await _groupService.leaveGroup(_currentGroup!.id);
+        if (mounted) {
+          setState(() => _currentGroup = null);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Left group successfully'),
+              backgroundColor: kSuccessColor,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to leave group: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Group Focus'),
+        backgroundColor: const Color(0xFF121622),
+        actions: [
+          if (_currentGroup != null)
+            PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'leave') _leaveGroup();
+                else if (value == 'invite') _showInviteDialog();
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'invite',
+                  child: Row(
+                    children: [
+                      Icon(Icons.share, size: 20),
+                      SizedBox(width: 8),
+                      Text('Invite Friends'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'leave',
+                  child: Row(
+                    children: [
+                      Icon(Icons.exit_to_app, size: 20, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('Leave Group', style: TextStyle(color: Colors.red)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+      body: _currentGroup == null
+          ? _buildNoGroupView()
+          : _buildGroupView(),
+    );
+  }
+
+  Widget _buildNoGroupView() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        SoftCard(
+          child: Column(
+            children: [
+              const Icon(Icons.group_add, size: 64, color: kAccentColor),
+              const SizedBox(height: 16),
+              const Text(
+                'Join a Group',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Focus together with friends and stay motivated',
+                style: TextStyle(color: kTextSubtleColor),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: GradientButton(
+                      label: 'Create Group',
+                      icon: Icons.add,
+                      onPressed: () => Navigator.pushNamed(context, '/group-create'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: GradientButton(
+                      label: 'Join Group',
+                      icon: Icons.login,
+                      isPrimary: false,
+                      onPressed: () => Navigator.pushNamed(context, '/group-join'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        SoftCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Why Join a Group?',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 12),
+              const _GroupFeatureItem(
+                icon: Icons.timer,
+                title: 'Synchronized Sessions',
+                description: 'Start and end focus sessions together',
+              ),
+              const _GroupFeatureItem(
+                icon: Icons.leaderboard,
+                title: 'Group Competition',
+                description: 'Compete with friends on the leaderboard',
+              ),
+              const _GroupFeatureItem(
+                icon: Icons.chat,
+                title: 'Motivation & Support',
+                description: 'Encourage each other to stay focused',
+              ),
+              const _GroupFeatureItem(
+                icon: Icons.emoji_events,
+                title: 'Group Achievements',
+                description: 'Unlock special group achievements',
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGroupView() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        // Group Header
+        SoftCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: kAccentColor.withOpacity(0.2),
+                      borderRadius: kRadiusMedium,
+                    ),
+                    child: const Icon(Icons.group, color: kAccentColor, size: 24),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _currentGroup!.name,
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                        ),
+                        Text(
+                          '${_currentGroup!.memberCount}/${_currentGroup!.maxMembers} members',
+                          style: const TextStyle(color: kTextSubtleColor),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: kSuccessColor.withOpacity(0.2),
+                      borderRadius: kRadiusSmall,
+                    ),
+                    child: Text(
+                      _currentGroup!.joinCode,
+                      style: const TextStyle(
+                        color: kSuccessColor,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (_currentGroup!.description.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _currentGroup!.description,
+                  style: const TextStyle(color: kTextSubtleColor),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Active Session or Start Session
+        if (_activeSession != null)
+          _buildActiveSessionCard()
+        else
+          _buildStartSessionCard(),
+
+        const SizedBox(height: 16),
+
+        // Members List
+        SoftCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Group Members',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 12),
+              ..._currentGroup!.members.map((member) => _buildMemberTile(member)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActiveSessionCard() {
+    final remainingTime = _activeSession!.remainingTime;
+    final progress = 1 - (remainingTime.inSeconds / _activeSession!.duration.inSeconds);
+    
+    return SoftCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.timer, color: kAccentColor),
+              const SizedBox(width: 8),
+              const Text(
+                'Active Session',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            _activeSession!.name,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+          if (_activeSession!.taskDescription != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              _activeSession!.taskDescription!,
+              style: const TextStyle(color: kTextSubtleColor),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _formatDuration(remainingTime),
+                      style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+                    ),
+                    const Text('remaining', style: TextStyle(color: kTextSubtleColor)),
+                  ],
+                ),
+              ),
+              SizedBox(
+                width: 60,
+                height: 60,
+                child: CircularProgressIndicator(
+                  value: progress,
+                  strokeWidth: 6,
+                  backgroundColor: Colors.white24,
+                  valueColor: const AlwaysStoppedAnimation<Color>(kAccentColor),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '${_activeSession!.completedParticipants.length}/${_activeSession!.participantIds.length} completed',
+            style: const TextStyle(color: kTextSubtleColor),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStartSessionCard() {
+    return SoftCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Start a Focus Session',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Begin a synchronized focus session with your group members',
+            style: TextStyle(color: kTextSubtleColor),
+          ),
+          const SizedBox(height: 16),
+          GradientButton(
+            label: _isLoading ? 'Starting...' : 'Start Together',
+            icon: Icons.play_arrow_rounded,
+            onPressed: _isLoading ? null : _startGroupSession,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMemberTile(GroupMember member) {
+    final isCurrentUser = member.id == 'current_user'; // This should be actual user ID
+    
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 20,
+            backgroundColor: member.isOnline ? kSuccessColor : kTextSubtleColor,
+            child: Text(
+              member.name.isNotEmpty ? member.name[0].toUpperCase() : '?',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      isCurrentUser ? '${member.name} (You)' : member.name,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    if (member.isInSession) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: kAccentColor.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text(
+                          'In Session',
+                          style: TextStyle(
+                            color: kAccentColor,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                Text(
+                  '${member.xp} XP',
+                  style: const TextStyle(color: kTextSubtleColor, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          Icon(
+            member.isOnline ? Icons.circle : Icons.circle_outlined,
+            color: member.isOnline ? kSuccessColor : kTextSubtleColor,
+            size: 12,
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showInviteDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF262626),
+        title: const Text('Invite Friends'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Share this code with your friends:'),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: kPrimaryColor.withOpacity(0.2),
+                borderRadius: kRadiusMedium,
+              ),
+              child: Text(
+                _currentGroup!.joinCode,
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 4,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'They can join by entering this code in the app',
+              style: TextStyle(color: kTextSubtleColor),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+          GradientButton(
+            label: 'Copy Code',
+            onPressed: () {
+              // Copy to clipboard
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Code copied to clipboard!')),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDuration(Duration duration) {
+    final minutes = duration.inMinutes;
+    final seconds = duration.inSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 }
 
@@ -1334,6 +1862,46 @@ class _ParticlePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+class _GroupFeatureItem extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String description;
+
+  const _GroupFeatureItem({
+    required this.icon,
+    required this.title,
+    required this.description,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: kTextSubtleColor),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                Text(
+                  description,
+                  style: const TextStyle(color: kTextSubtleColor, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 

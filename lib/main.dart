@@ -2,8 +2,21 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'theme.dart';
 import 'screens.dart';
+import 'screens/group_creation_screen.dart';
+import 'screens/group_join_screen.dart';
+import 'services/group_service.dart';
+import 'services/realtime_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize group service with a temporary user ID
+  // In a real app, this would come from authentication
+  GroupService().initialize('user_${DateTime.now().millisecondsSinceEpoch}');
+  
+  // Start real-time updates
+  RealtimeService().startRealtimeUpdates();
+  
   runApp(const MyApp());
 }
 
@@ -45,6 +58,8 @@ class MyApp extends StatelessWidget {
         '/parent-dashboard': (_) => const ParentDashboardScreen(),
         '/child-management': (_) => const ChildManagementScreen(),
         '/reports': (_) => const ReportsScreen(),
+        '/group-create': (_) => const GroupCreationScreen(),
+        '/group-join': (_) => const GroupJoinScreen(),
       },
     );
   }
